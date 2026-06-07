@@ -207,10 +207,27 @@ def send_telegram(text):
             print(f"❌ Telegram Error: {e}")
 
 # ================= MAIN =================
+# ================= MAIN =================
 def run():
     print("🚀 Starting XT Spot Scanner...")
     results = scan_spot()
     print(f"✅ Found {len(results)} symbols")
+    
+    # 🎯 نمایش لیست کامل ارزها در console
+    if results:
+        print("\n" + "="*70)
+        print("🎯 FOUND SYMBOLS (Spot Market):")
+        print("="*70)
+        print(f"{'#':<4} {'Symbol':<15} {'Price':<15} {'Market Cap':<15} {'Volume 24h':<15}")
+        print("-"*70)
+        
+        for i, s in enumerate(results, 1):
+            mc_str = f"${s['market_cap']/1e6:.2f}M" if s['market_cap'] >= 1e6 else f"${s['market_cap']/1e3:.2f}K"
+            vol_str = f"${s['volume_24h']/1e6:.2f}M" if s['volume_24h'] >= 1e6 else f"${s['volume_24h']/1e3:.2f}K"
+            print(f"{i:<4} {s['symbol']:<15} {s['price']:<15,.6f} {mc_str:<15} {vol_str:<15}")
+        
+        print("="*70)
+        print(f"\n📊 Total: {len(results)} symbols found")
     
     if TELEGRAM_CHAT_IDS:
         msgs = build_message(results, len(get_spot_pairs()))
@@ -218,6 +235,3 @@ def run():
             send_telegram(msg)
             time.sleep(0.3)
         print("✅ Sent to Telegram")
-
-if __name__ == "__main__":
-    run()
