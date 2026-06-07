@@ -199,6 +199,7 @@ def send_telegram(text):
             print(f"❌ Telegram Error: {e}")
 
 # ================= MAIN =================
+# ================= MAIN =================
 def run():
     print("🚀 Starting XT Futures Scanner (2-Stage)...")
     pairs = get_futures_pairs()
@@ -209,12 +210,24 @@ def run():
     
     print(f"\n✅ Final: {len(results)} symbols")
     
+    # 🎯 نمایش لیست کامل ارزها در console
+    if results:
+        print("\n" + "="*70)
+        print("🎯 FOUND SYMBOLS (مرتب شده بر اساس ریسک):")
+        print("="*70)
+        print(f"{'#':<4} {'Symbol':<15} {'Price':<15} {'Risk%':<10} {'Vol Ratio':<12} {'Market Cap':<15}")
+        print("-"*70)
+        
+        for i, s in enumerate(results, 1):
+            mc_str = f"${s['market_cap']/1e6:.2f}M" if s['market_cap'] >= 1e6 else f"${s['market_cap']/1e3:.2f}K"
+            print(f"{i:<4} {s['symbol']:<15} {s['price']:<15,.6f} {s['risk_pct']:<10,.2f} {s['v_alpha']:<12,.2f}x {mc_str:<15}")
+        
+        print("="*70)
+        print(f"\n📊 Total: {len(results)} symbols found")
+    
     if TELEGRAM_CHAT_IDS:
         msgs = build_message(results, len(stage1_passed), len(pairs))
         for msg in msgs:
             send_telegram(msg)
             time.sleep(0.3)
         print("✅ Sent to Telegram")
-
-if __name__ == "__main__":
-    run()
