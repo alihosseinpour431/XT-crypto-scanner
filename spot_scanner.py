@@ -203,25 +203,41 @@ def run():
     results = scan_spot()
     print(f"\n✅ Found {len(results)} symbols", flush=True)
     
-    # نمایش لیست در کنسول
+    # 🎯 نمایش لیست کامل ارزها در کنسول GitHub
     if results:
-        print("\n" + "="*70, flush=True)
-        print(f"🎯 FOUND {len(results)} SYMBOLS:", flush=True)
-        print("="*70, flush=True)
-        print(f"{'#':<4} {'Symbol':<15} {'Price':<15} {'Market Cap':<15}", flush=True)
-        print("-"*70, flush=True)
+        print("\n" + "="*80, flush=True)
+        print(f"🎯 FOUND {len(results)} SYMBOLS - COMPLETE LIST:", flush=True)
+        print("="*80, flush=True)
+        print(f"{'#':<4} {'Symbol':<20} {'Price':<18} {'Market Cap':<15}", flush=True)
+        print("-"*80, flush=True)
+        
         for i, s in enumerate(results, 1):
-            mc_str = f"${s['market_cap']/1e6:.2f}M" if s['market_cap'] >= 1e6 else f"${s['market_cap']/1e3:.2f}K"
-            print(f"{i:<4} {s['symbol']:<15} {s['price']:<15,.6f} {mc_str:<15}", flush=True)
-        print("="*70 + "\n", flush=True)
+            # فرمت مارکت‌کپ
+            if s['market_cap'] >= 1e6:
+                mc_str = f"${s['market_cap']/1e6:.2f}M"
+            elif s['market_cap'] >= 1e3:
+                mc_str = f"${s['market_cap']/1e3:.2f}K"
+            else:
+                mc_str = f"${s['market_cap']:,.0f}"
+            
+            print(f"{i:<4} {s['symbol']:<20} {s['price']:<18,.6f} {mc_str:<15}", flush=True)
+        
+        print("="*80, flush=True)
+        print(f"\n📊 Total: {len(results)} symbols found and listed above", flush=True)
+    else:
+        print("\n❌ NO SYMBOLS PASSED THE FILTERS", flush=True)
+        print("💡 Possible reasons:", flush=True)
+        print("   • Market cap range too narrow (1K - 1M)", flush=True)
+        print("   • Price <= EMA50 for most pairs", flush=True)
+        print("   • No market cap data from CoinMarketCap", flush=True)
     
     # ارسال به تلگرام
     if TELEGRAM_CHAT_IDS and results:
-        print("📤 Sending to Telegram...", flush=True)
-        for msg in build_message(results, len(get_spot_pairs())):
+        print("\n📤 Sending results to Telegram...", flush=True)
+        msgs = build_message(results, len(get_spot_pairs()))
+        for msg in msgs:
             send_telegram(msg)
             time.sleep(0.3)
         print("✅ Sent to Telegram", flush=True)
-
-if __name__ == "__main__":
-    run()
+    elif not results:
+        print("\n⚠️ No results to send to Telegram", flush=True)
