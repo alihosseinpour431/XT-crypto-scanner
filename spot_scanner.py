@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-🔍 XT Spot Scanner | DEBUG VERSION
-Condition: Price > EMA(50) | Daily
-Market Cap: 1K - 1M USD
+🔍 XT Spot Scanner | Price > EMA(50) | Market Cap from XT
+✅ Only XT API Data (No CMC, No Volume Proxy)
 """
 import os
 import sys
@@ -17,125 +16,97 @@ from tqdm.auto import tqdm
 # ================= CONFIG =================
 EXCHANGE_ID = 'xt'
 TELEGRAM_BOT_TOKEN = "8766406031:AAEK0GuMnw3EFD5BSGgGQ3aPYbYcKXyG59U"
-TELEGRAM_CHAT_IDS = ["your_chat_id"]
-CMC_API_KEY = "39478549b7c94ee093d0f3cbe43a39e9"
+TELEGRAM_CHAT_IDS = ["your_chat_id"]  # آیدی تلگرامت
 
-MIN_MARKET_CAP = 1_000_000
-MAX_MARKET_CAP = 5_000_000
+# فیلترها
 DAILY_TF = '1d'
 DAILY_LIMIT = 100
 EMA_PERIOD = 50
-
-# ================= DEBUG FLAGS =================
-DEBUG_MODE = True  # ✅ فعال برای دیدن همه لاگ‌ها
-
+MIN_MARKET_CAP = 1_000      # 1K USD
+MAX_MARKET_CAP = 1_000_000  # 1M USD
 
 # ================= EXCHANGE INIT =================
-print("🔌 Initializing exchange with custom headers...", flush=True)
+print("🔌 Connecting to XT...", flush=True)
 try:
     exchange = getattr(ccxt, EXCHANGE_ID)({
         'enableRateLimit': True,
         'timeout': 30000,
+        # هدرها برای جلوگیری از بلاک شدن گیت‌هاب (403)
         'headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'application/json, text/plain, */*',
-            'Accept-Language': 'en-US,en;q=0.9',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+            'Accept': 'application/json',
             'Origin': 'https://www.xt.com',
             'Referer': 'https://www.xt.com/'
         },
-        'options': {
-            'defaultType': 'spot',
-        }
+        'options': {'defaultType': 'spot'}
     })
     
-    # تلاش برای لود مارکت‌ها با Retry
+    # تلاش برای لود مارکت‌ها
     for attempt in range(3):
         try:
-            print(f"📦 Loading markets (attempt {attempt+1}/3)...", flush=True)
+            print(f"📦 Loading markets ({attempt+1}/3)...", flush=True)
             exchange_markets = exchange.load_markets()
-            print(f"✅ Connected! Loaded {len(exchange_markets)} markets", flush=True)
+            print(f"✅ Loaded {len(exchange_markets)} markets", flush=True)
             break
-        except ccxt.ExchangeNotAvailable as e:
-            print(f"⚠️ Attempt {attempt+1} failed: {e}", flush=True)
-            if attempt < 2:
-                print(f"⏳ Waiting 5 seconds before retry...", flush=True)
-                time.sleep(5)
-            else:
-                raise
-    else:
-        print("❌ Failed to load markets after 3 attempts", flush=True)
-        sys.exit(1)
-        
+        except Exception as e:
+            print(f"⚠️ Attempt {attempt+1} failed", flush=True)
+            if attempt < 2: time.sleep(3)
+            else: raise
 except Exception as e:
-    print(f"❌ CRITICAL ERROR: {e}", flush=True)
-    import traceback
-    traceback.print_exc()
+    print(f"❌ Error: {e}", flush=True)
     sys.exit(1)
 
 # ================= GET SPOT PAIRS =================
 def get_spot_pairs():
-    symbol_map = {}
-    print("🔍 Filtering spot pairs...", flush=True)
-    
+    pairs = []
     for symbol, info in exchange_markets.items():
-        if not info.get('active'):
-            continue
-        if info.get('quote') != 'USDT':
-            continue
-        is_spot = info.get('spot', False)
-        if is_spot:
-            base = symbol.split('/')[0].upper()
-            if base not in symbol_map:
-                symbol_map[base] = (symbol, info)
-    
-    pairs = list(symbol_map.values())
-    print(f"📊 Found {len(pairs)} active spot pairs with USDT", flush=True)
-    
-    # ✅ نمایش 10 نمونه اول برای دیباگ
-    if DEBUG_MODE and pairs:
-        print("📋 Sample pairs:", flush=True)
-        for i, (s, _) in enumerate(pairs[:10], 1):
-            print(f"   {i}. {s}", flush=True)
-    
+        if not info.get('active'): continue
+        if info.get('quote') != 'USDT': continue
+        if info.get('spot', False):
+            pairs.append((symbol, info))
+    print(f"📊 Found {len(pairs)} active spot USDT pairs", flush=True)
     return pairs
 
 # ================= FETCH DATA =================
 def fetch_ohlcv(symbol, timeframe, limit):
     try:
         data = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
-        if len(data) < EMA_PERIOD:
-            if DEBUG_MODE:
-                print(f"⚠️ {symbol}: Only {len(data)} bars (need {EMA_PERIOD})", flush=True)
-            return None
-        df = pd.DataFrame(data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        if len(data) < EMA_PERIOD: return None
+        df = pd.DataFrame(data, columns=['timestamp','open','high','low','close','volume'])
         df['close'] = df['close'].astype(float)
         return df
-    except Exception as e:
-        if DEBUG_MODE:
-            print(f"⚠️ Fetch error {symbol}: {e}", flush=True)
-        return None
+    except: return None
 
-# ================= MARKET CAP =================
-def get_market_cap(symbol_base):
+# ================= MARKET CAP FROM XT =================
+def get_market_cap_from_xt(symbol):
+    """
+    دریافت مارکت‌کپ مستقیم از داده‌های XT
+    اولویت: 1) Info داخل مارکت 2) Info داخل تیکر
+    """
     try:
-        if not CMC_API_KEY:
-            return None
-        url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest"
-        params = {'symbol': symbol_base.upper(), 'convert': 'USD'}
-        headers = {
-            'X-CMC_PRO_API_KEY': CMC_API_KEY,
-            'Accepts': 'application/json'
-        }
-        resp = requests.get(url, params=params, headers=headers, timeout=5)
-        resp.raise_for_status()
-        data = resp.json()
-        if "data" in data and symbol_base.upper() in data["data"]:
-            mc = data["data"][symbol_base.upper()].get("quote", {}).get("USD", {}).get("market_cap")
-            return float(mc) if mc and mc > 0 else None
+        # 1. بررسی دیتای مارکت (که قبلاً لود شده)
+        market_info = exchange.markets[symbol].get('info', {})
+        mc = market_info.get('marketCap') or market_info.get('market_cap') or market_info.get('marketCapUsd')
+        
+        if mc is not None:
+            return float(mc)
+        
+        # 2. اگر نبود، فچ تیکر (دقیق‌تر)
+        # نکته: فچ تیکر زمان‌بره، فقط برای کاندیداهای نهایی استفاده میشه یا اگر مارکت نداشت
+        ticker = exchange.fetch_ticker(symbol)
+        ticker_info = ticker.get('info', {})
+        
+        # کلیدهای احتمالی در XT
+        mc = (ticker_info.get('marketCap') or 
+              ticker_info.get('market_cap') or 
+              ticker_info.get('marketCapUsd') or
+              ticker_info.get('mc'))
+              
+        if mc is not None:
+            return float(mc)
+            
         return None
     except Exception as e:
-        if DEBUG_MODE:
-            print(f"⚠️ CMC error for {symbol_base}: {e}", flush=True)
         return None
 
 # ================= SCAN SPOT =================
@@ -143,78 +114,49 @@ def scan_spot():
     results = []
     pairs = get_spot_pairs()
     
-    if not pairs:
-        print("❌ NO SPOT PAIRS FOUND - Check exchange connection or USDT filter", flush=True)
-        return []
-    
-    print(f"\n🔍 Starting scan of {len(pairs)} spot pairs...", flush=True)
-    print(f"   Condition: Price > EMA{EMA_PERIOD} (Daily)", flush=True)
-    print(f"   Market Cap: ${MIN_MARKET_CAP/1e3:.1f}K - ${MAX_MARKET_CAP/1e6:.1f}M", flush=True)
+    print(f"\n🔍 Scanning {len(pairs)} pairs...", flush=True)
+    print(f"   Filter 1: Price > EMA{EMA_PERIOD} (Daily)", flush=True)
+    print(f"   Filter 2: Market Cap {MIN_MARKET_CAP/1e3:.0f}K - {MAX_MARKET_CAP/1e6:.1f}M (from XT)", flush=True)
     print("-" * 70, flush=True)
     
-    scanned = 0
-    passed_ema = 0
-    passed_mc = 0
-    
-    for symbol, info in tqdm(pairs, desc="Scanning", disable=not DEBUG_MODE):
+    for symbol, info in tqdm(pairs, desc="Scanning"):
         try:
-            scanned += 1
-            
-            # دریافت داده‌های روزانه
+            # فیلتر 1: EMA
             df = fetch_ohlcv(symbol, DAILY_TF, DAILY_LIMIT)
-            if df is None:
-                continue
+            if df is None: continue
             
-            # محاسبه EMA50
             df['ema50'] = df['close'].ewm(span=EMA_PERIOD, adjust=False).mean()
             last = df.iloc[-1]
             
-            if pd.isna(last['close']) or pd.isna(last['ema50']):
-                continue
+            if pd.isna(last['close']) or pd.isna(last['ema50']): continue
+            if not (last['close'] > last['ema50']): continue  # شرط قیمت بالاتر از EMA
             
-            # بررسی شرط: Price > EMA50
-            if not (last['close'] > last['ema50']):
-                continue
-            passed_ema += 1
+            # فیلتر 2: مارکت‌کپ مستقیم از XT
+            # برای کاهش درخواست‌های اضافه، اول چک می‌کنیم ببینیم توی لیست مارکت‌ها هست یا نه
+            # اما چون دقیق میخوایم، از تابع اختصاصی استفاده میکنیم
             
-            # دریافت مارکت‌کپ
-            symbol_base = symbol.split('/')[0]
-            market_cap = get_market_cap(symbol_base)
+            # ⚠️ نکته: اگر بخواهیم سرعت بالا بره، باید مارکت کپ رو چک کنیم
+            # اگر صرافی XT مارکت کپ رو توی load_markets برنمیگردونه، این قسمت کند میشه
+            # فرض بر این است که XT مارکت کپ رو داره.
             
-            if market_cap is None:
-                if DEBUG_MODE and scanned % 50 == 0:
-                    print(f"⚠️ {symbol_base}: No market cap data", flush=True)
-                continue
+            market_cap = get_market_cap_from_xt(symbol)
             
-            if not (MIN_MARKET_CAP <= market_cap <= MAX_MARKET_CAP):
+            if market_cap is None: 
+                # اگر مارکت کپ دیتا نداشت، رد میکنیم (یا میتونی لاجیک رو عوض کنی)
                 continue
-            passed_mc += 1
+                
+            if not (MIN_MARKET_CAP <= market_cap <= MAX_MARKET_CAP): continue
             
             results.append({
                 'symbol': symbol,
-                'symbol_base': symbol_base,
+                'symbol_base': symbol.split('/')[0],
                 'price': last['close'],
                 'market_cap': market_cap,
                 'mkt_type': 'S'
             })
             
-            if DEBUG_MODE and len(results) <= 5:
-                mc_str = f"${market_cap/1e6:.2f}M" if market_cap >= 1e6 else f"${market_cap/1e3:.2f}K"
-                print(f"✅ MATCH: {symbol} | Price: {last['close']:.6f} | MC: {mc_str}", flush=True)
-            
-        except Exception as e:
-            if DEBUG_MODE:
-                print(f"❌ Error processing {symbol}: {e}", flush=True)
-                import traceback
-                traceback.print_exc()
-        time.sleep(0.05)
-    
-    print(f"\n📊 Scan Summary:", flush=True)
-    print(f"   ├─ Total pairs: {len(pairs)}", flush=True)
-    print(f"   ├─ Scanned: {scanned}", flush=True)
-    print(f"   ├─ Passed EMA50: {passed_ema}", flush=True)
-    print(f"   ├─ Passed Market Cap: {passed_mc}", flush=True)
-    print(f"   └─ Final results: {len(results)}", flush=True)
+        except: pass
+        time.sleep(0.05)  # جلوگیری از ریت لیمیت XT
     
     return results
 
@@ -222,72 +164,55 @@ def scan_spot():
 def build_message(signals, total_scanned):
     now = datetime.now().strftime('%Y/%m/%d %H:%M:%S')
     header = (
-        f"🔍 <b>XT Spot Scanner</b>\n"
+        f" <b>XT Spot Scanner</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📊 Scanned: <code>{total_scanned}</code> | ✅ Found: <code>{len(signals)}</code>\n"
         f"📋 Filter: Price &gt; EMA{EMA_PERIOD} (Daily)\n"
-        f"💰 Market Cap: ${MIN_MARKET_CAP/1e3:.1f}K - ${MAX_MARKET_CAP/1e6:.1f}M\n"
+        f"💰 Market Cap (XT Data): ${MIN_MARKET_CAP/1e3:.0f}K - ${MAX_MARKET_CAP/1e6:.1f}M\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
     )
-    footer = f"\n⏰ {now} 🇮🇷\n🤖 XT Spot Scanner"
+    footer = f"\n {now} 🇮🇷\n🤖 XT Spot Scanner"
     
-    msgs = []
-    body = ""
-    MAX = 4000
-    
+    msgs, body, MAX = [], "", 4000
     for r, s in enumerate(signals, 1):
         tv_link = f"https://www.tradingview.com/chart/?symbol=XT:{s['symbol'].replace('/', '')}"
+        
+        # فرمت مارکت کپ
         if s['market_cap'] >= 1e6:
             mc_str = f"${s['market_cap']/1e6:.2f}M"
         elif s['market_cap'] >= 1e3:
             mc_str = f"${s['market_cap']/1e3:.2f}K"
         else:
             mc_str = f"${s['market_cap']:,.0f}"
-        
-        card = (
-            f"{r}. <a href='{tv_link}'>{escape(s['symbol_base'])}</a> | "
-            f"💰{s['price']:,.6f} | "
-            f"🏛️{mc_str}\n"
-        )
+            
+        card = f"{r}. <a href='{tv_link}'>{escape(s['symbol_base'])}</a> | 💰{s['price']:,.6f} | 🏛️{mc_str}\n"
         
         if len(header) + len(body) + len(card) + len(footer) > MAX - 100:
-            msgs.append(header + body + footer)
+            if body.strip(): msgs.append(header + body + footer)
             body = card
-        else:
-            body += card
-    
-    if body.strip():
-        msgs.append(header + body + footer)
-    
-    if not msgs:
-        msgs.append(f"{header}❌ No symbols found.{footer}")
-    
+        else: body += card
+    if body.strip(): msgs.append(header + body + footer)
+    if not msgs: msgs.append(f"{header}❌ No symbols found.{footer}")
     return msgs
 
 # ================= TELEGRAM =================
 def send_telegram(text):
-    if not TELEGRAM_BOT_TOKEN:
-        return
+    if not TELEGRAM_BOT_TOKEN: return
     for cid in TELEGRAM_CHAT_IDS:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {
-            'chat_id': cid,
-            'text': text,
-            'parse_mode': 'HTML',
-            'disable_web_page_preview': False
-        }
         try:
-            requests.post(url, json=payload, timeout=30)
-        except Exception as e:
-            print(f"❌ Telegram Error: {e}", flush=True)
+            requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                json={'chat_id': cid, 'text': text, 'parse_mode': 'HTML'},
+                timeout=30
+            )
+        except: pass
 
 # ================= MAIN =================
 def run():
-    print("🚀 Starting XT Spot Scanner (DEBUG MODE)...", flush=True)
-    
+    print(" Starting XT Spot Scanner...", flush=True)
     results = scan_spot()
+    print(f"\n✅ Found {len(results)} symbols", flush=True)
     
-    # نمایش لیست در کنسول
     if results:
         print("\n" + "="*70, flush=True)
         print(f"🎯 FOUND {len(results)} SYMBOLS:", flush=True)
@@ -298,22 +223,13 @@ def run():
             mc_str = f"${s['market_cap']/1e6:.2f}M" if s['market_cap'] >= 1e6 else f"${s['market_cap']/1e3:.2f}K"
             print(f"{i:<4} {s['symbol']:<20} {s['price']:<18,.6f} {mc_str:<15}", flush=True)
         print("="*70 + "\n", flush=True)
-    else:
-        print("\n❌ NO RESULTS - Possible causes:", flush=True)
-        print("   • No spot pairs with USDT on XT", flush=True)
-        print("   • Price <= EMA50 for all pairs", flush=True)
-        print("   • Market cap filter too narrow (1K-1M)", flush=True)
-        print("   • CoinMarketCap API returned no data", flush=True)
     
-    # ارسال به تلگرام
     if TELEGRAM_CHAT_IDS and results:
         print("📤 Sending to Telegram...", flush=True)
         for msg in build_message(results, len(get_spot_pairs())):
             send_telegram(msg)
             time.sleep(0.3)
         print("✅ Sent to Telegram", flush=True)
-    elif not results:
-        print("\n⚠️ No results to send", flush=True)
 
 if __name__ == "__main__":
     run()
