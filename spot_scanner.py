@@ -29,17 +29,43 @@ EMA_PERIOD = 50
 # ================= DEBUG FLAGS =================
 DEBUG_MODE = True  # ✅ فعال برای دیدن همه لاگ‌ها
 
-# ================= EXCHANGE =================
-print("🔌 Initializing exchange...", flush=True)
+
+# ================= EXCHANGE INIT =================
+print("🔌 Initializing exchange with custom headers...", flush=True)
 try:
     exchange = getattr(ccxt, EXCHANGE_ID)({
         'enableRateLimit': True,
         'timeout': 30000,
-        'verbose': DEBUG_MODE  # ✅ لاگ درخواست‌های API
+        'headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Origin': 'https://www.xt.com',
+            'Referer': 'https://www.xt.com/'
+        },
+        'options': {
+            'defaultType': 'spot',
+        }
     })
-    print(f"📦 Loading markets from {EXCHANGE_ID.upper()}...", flush=True)
-    exchange_markets = exchange.load_markets()
-    print(f"✅ Connected! Loaded {len(exchange_markets)} markets", flush=True)
+    
+    # تلاش برای لود مارکت‌ها با Retry
+    for attempt in range(3):
+        try:
+            print(f"📦 Loading markets (attempt {attempt+1}/3)...", flush=True)
+            exchange_markets = exchange.load_markets()
+            print(f"✅ Connected! Loaded {len(exchange_markets)} markets", flush=True)
+            break
+        except ccxt.ExchangeNotAvailable as e:
+            print(f"⚠️ Attempt {attempt+1} failed: {e}", flush=True)
+            if attempt < 2:
+                print(f"⏳ Waiting 5 seconds before retry...", flush=True)
+                time.sleep(5)
+            else:
+                raise
+    else:
+        print("❌ Failed to load markets after 3 attempts", flush=True)
+        sys.exit(1)
+        
 except Exception as e:
     print(f"❌ CRITICAL ERROR: {e}", flush=True)
     import traceback
